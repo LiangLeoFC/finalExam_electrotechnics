@@ -2,6 +2,8 @@
 
 学习通《电工学》章节测验题库的刷题网页，纯前端、零依赖。
 
+**在线刷题**：<https://liangleofc.github.io/finalExam_electrotechnics/>
+
 ## 功能
 
 - **单一题库**：按章节选择测验刷题（21 个测验，165 题）
