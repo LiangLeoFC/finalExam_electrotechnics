@@ -214,6 +214,13 @@ img.qimg{max-width:100%;vertical-align:middle;border-radius:4px}
 .q-ask:hover{border-color:var(--accent);color:var(--accent)}
 .q-fav{margin-left:0}
 
+/* 面板停靠：桌面端打开后题目内容左移，不遮挡（非弹窗式） */
+.main{transition:margin .25s ease}
+@media (min-width:1150px){
+  body.ai-docked .main{margin-right:420px}
+  body.ai-docked .ai-fab{display:none}
+}
+
 @media (max-width:800px){
   .q-card{padding:20px}
   .q-stem{font-size:16px}

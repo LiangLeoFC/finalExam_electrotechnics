@@ -143,6 +143,8 @@ function cur(){
 }
 
 function renderQuestion(){
+  const af = document.getElementById("askFloat");
+  if(af) af.style.display = "none"; // 翻题后旧选区失效
   const area = document.getElementById("questionArea");
   const nav = document.getElementById("navButtons");
   document.getElementById("batchResult").classList.remove("show");
@@ -597,9 +599,13 @@ function aiClearKey(){
   showToast(AI_DEFAULT_KEY ? "已清除自定义 Key，使用内置 Key" : "已清除 Key");
   aiRenderWelcome();
 }
-function aiTogglePanel(){
-  document.getElementById("aiPanel").classList.toggle("open");
-  if(document.getElementById("aiPanel").classList.contains("open")){ aiUsageTip(); }
+function aiTogglePanel(open){
+  const panel = document.getElementById("aiPanel");
+  const willOpen = (typeof open === "boolean") ? open : !panel.classList.contains("open");
+  panel.classList.toggle("open", willOpen);
+  document.body.classList.toggle("ai-docked", willOpen);
+  localStorage.setItem("dgx_ai_open", willOpen ? "1" : "0");
+  if(willOpen) aiUsageTip();
 }
 function aiToggleSettings(){
   const el = document.getElementById("aiSettings");
@@ -692,10 +698,11 @@ document.addEventListener("mouseup", (e)=>{
   if(float.contains(e.target)) return;
   setTimeout(()=>{
     const sel = window.getSelection();
-    if(!sel || sel.isCollapsed){ float.style.display="none"; return; }
+    // 选区塌陷时不隐藏——按钮保持固定，直到点它 / 按 Esc / 翻题
+    if(!sel || sel.isCollapsed) return;
     const text = sel.toString().trim();
     const anchor = sel.anchorNode ? (sel.anchorNode.nodeType===3 ? sel.anchorNode.parentElement : sel.anchorNode) : null;
-    if(text.length<2 || !anchor || !anchor.closest(".q-card")){ float.style.display="none"; return; }
+    if(text.length<2 || !anchor || !anchor.closest(".q-card")) return;
     try{
       const range = sel.getRangeAt(0);
       const imgs = Array.from(range.cloneContents().querySelectorAll("img")).map(i=>i.src);
@@ -704,12 +711,12 @@ document.addEventListener("mouseup", (e)=>{
       float.style.left = Math.max(8, Math.min(rect.left + rect.width/2 - 44, window.innerWidth-100)) + "px";
       float.style.top = Math.max(60, rect.top - 40) + "px";
       float.style.display = "block";
-    }catch(err){ float.style.display="none"; }
+    }catch(err){}
   }, 10);
 });
-document.addEventListener("mousedown", (e)=>{
-  const float = document.getElementById("askFloat");
-  if(!float.contains(e.target)) float.style.display="none";
+// Esc 关闭划词按钮
+document.addEventListener("keydown", (e)=>{
+  if(e.key==="Escape") document.getElementById("askFloat").style.display="none";
 });
 document.getElementById("askFloat").addEventListener("click", ()=>{
   const float = document.getElementById("askFloat");
@@ -933,5 +940,7 @@ function init(){
   });
   renderAll();
   aiRenderWelcome();
+  // 恢复面板停靠状态（刷新后保持打开）
+  if(localStorage.getItem("dgx_ai_open")==="1") aiTogglePanel(true);
 }
 init();
