@@ -165,6 +165,7 @@ function renderQuestion(){
   let meta = `<span class="q-type ${q.t}">${TYPE_LABEL[q.t]}</span>
     <span class="q-bankname">${bank.section} ${escapeHtml(bank.name)}</span>`;
   if(q.wrong) meta += `<span class="q-orig-wrong">学习通错题</span>`;
+  meta += `<button class="q-ask" onclick="aiAskCurrent()">✨ 问AI</button>`;
   meta += `<button class="q-fav ${state.favs[q.k]?"on":""}" onclick="toggleFav('${q.k}')" title="收藏">${state.favs[q.k]?"★":"☆"}</button>`;
 
   let body = `<div class="q-meta">${meta}</div><div class="q-stem">${renderText(q.s)}</div>`;
@@ -574,6 +575,343 @@ document.addEventListener("keydown", (e)=>{
   }
 });
 
+/* ═══════════════ AI 助教（智谱 GLM 免费模型） ═══════════════ */
+const AI_ENDPOINT = "https://open.bigmodel.cn/api/paas/v4/chat/completions";
+const AI_MODEL_TEXT = "glm-4.5-flash";    // 免费文本模型
+const AI_MODEL_VISION = "glm-4v-flash";   // 免费视觉模型（识图）
+const AI_DEFAULT_KEY = "";                // 部署时可内置混淆后的 Key（可选）
+const AI_RATE = {perMin: 5, perDay: 100}; // 浏览器端限流（防滥用辅助层）
+const aiState = {quote:null, history:[], streaming:false, abort:null};
+
+function aiDecodeKey(s){ try{ return atob(s.split("").reverse().join("")); }catch(e){ return s; } }
+function getAIKey(){ return localStorage.getItem("dgx_ai_key") || (AI_DEFAULT_KEY ? aiDecodeKey(AI_DEFAULT_KEY) : ""); }
+function aiSaveKey(){
+  const v = document.getElementById("aiKeyInput").value.trim();
+  if(!v){ showToast("请先粘贴 Key"); return; }
+  localStorage.setItem("dgx_ai_key", v);
+  document.getElementById("aiKeyInput").value = "";
+  showToast("Key 已保存在本浏览器"); aiRenderWelcome(); aiUsageTip();
+}
+function aiClearKey(){
+  localStorage.removeItem("dgx_ai_key");
+  showToast(AI_DEFAULT_KEY ? "已清除自定义 Key，使用内置 Key" : "已清除 Key");
+  aiRenderWelcome();
+}
+function aiTogglePanel(){
+  document.getElementById("aiPanel").classList.toggle("open");
+  if(document.getElementById("aiPanel").classList.contains("open")){ aiUsageTip(); }
+}
+function aiToggleSettings(){
+  const el = document.getElementById("aiSettings");
+  el.style.display = el.style.display==="none" ? "block" : "none";
+  if(el.style.display==="block") aiUsageTip();
+}
+function aiUsageTip(){
+  const el = document.getElementById("aiUsageTip");
+  if(!el) return;
+  const r = JSON.parse(localStorage.getItem("dgx_ai_rate")||"{}");
+  const today = new Date().toDateString();
+  const used = (r.day===today ? r.count : 0) || 0;
+  el.textContent = `今日已用 ${used}/${AI_RATE.perDay} 次 · 限流 ${AI_RATE.perMin} 次/分钟（防滥用）`;
+}
+function aiRateOk(){
+  const now = Date.now();
+  let r = {};
+  try{ r = JSON.parse(localStorage.getItem("dgx_ai_rate")||"{}"); }catch(e){}
+  const today = new Date().toDateString();
+  if(r.day!==today) r = {day:today, count:0, ts:[]};
+  r.ts = (r.ts||[]).filter(t=>now-t<60000);
+  if(r.count>=AI_RATE.perDay){ showToast(`今日已达 ${AI_RATE.perDay} 次上限，明天再来`); return false; }
+  if(r.ts.length>=AI_RATE.perMin){ showToast("太快了，歇 1 分钟再问"); return false; }
+  r.count++; r.ts.push(now);
+  localStorage.setItem("dgx_ai_rate", JSON.stringify(r));
+  aiUsageTip();
+  return true;
+}
+function aiClear(){ aiState.history = []; aiState.quote = null; aiRenderQuote(); aiRenderWelcome(); showToast("对话已清空"); }
+
+/* ── 极简 markdown 渲染（加粗/代码/换行） ── */
+function mdLite(t){
+  let h = escapeHtml(t);
+  h = h.replace(/\*\*([^*]+)\*\*/g,"<b>$1</b>")
+       .replace(/`([^`]+)`/g,"<code>$1</code>")
+       .replace(/\n/g,"<br>");
+  return h;
+}
+
+/* ── 面板消息渲染 ── */
+function aiRenderWelcome(){
+  const box = document.getElementById("aiMsgs");
+  if(aiState.history.length) return;
+  const keyTip = getAIKey() ? "" :
+    `<div class="ai-chip" onclick="aiToggleSettings()">👉 先去 ⚙ 设置里粘贴免费 Key（bigmodel.cn 注册即得）</div>`;
+  box.innerHTML = `<div class="ai-welcome">
+    我读过全部 165 道题库，可以讲题、出类似题、总结考点。<br>
+    💡 小技巧：在题目里<b>用鼠标划选</b>内容（公式图片也行），点「✨ 问 AI」即可针对选中部分提问。<br>
+    对话不保存，刷新即清空。
+    <div class="ai-chips">
+      ${keyTip}
+      <div class="ai-chip" onclick="aiChip('请讲解当前这道题：先给结论，再讲原理和考点。')">讲解当前这道题</div>
+      <div class="ai-chip" onclick="aiChip('这道题涉及哪些考点？容易错在哪？')">考点分析</div>
+      <div class="ai-chip" onclick="aiChip('根据当前这道题出 2 道类似的选择题考我，先不要给答案。')">出道类似题考我</div>
+      <div class="ai-chip" onclick="aiChip('总结这一章的易错点。')">本章易错点</div>
+    </div>
+  </div>`;
+}
+function aiAddMsg(role, text, quote){
+  const box = document.getElementById("aiMsgs");
+  const welcome = box.querySelector(".ai-welcome");
+  if(welcome) box.innerHTML = "";
+  const div = document.createElement("div");
+  div.className = "ai-msg "+role;
+  let inner = "";
+  if(quote && quote.text) inner += `<div class="ai-quote-ref">📌 ${escapeHtml(quote.text.slice(0,80))}${quote.text.length>40?"…":""}${quote.images&&quote.images.length?`（含 ${quote.images.length} 张图）`:""}</div>`;
+  inner += `<div class="ai-bubble">${role==="user"?escapeHtml(text):mdLite(text)}</div>`;
+  div.innerHTML = inner;
+  box.appendChild(div);
+  box.scrollTop = box.scrollHeight;
+  return div;
+}
+function aiChip(text){ aiSend(text); }
+function aiAskCurrent(){
+  if(!document.getElementById("aiPanel").classList.contains("open")) aiTogglePanel();
+  aiSend("请讲解当前这道题：先给结论，再讲原理和考点。");
+}
+
+/* ── 划词引用 ── */
+function aiRenderQuote(){
+  const el = document.getElementById("aiQuote");
+  const q = aiState.quote;
+  if(!q){ el.className = "ai-quote"; el.innerHTML = ""; return; }
+  el.className = "ai-quote show";
+  el.innerHTML = `<span class="q-text">📌 ${escapeHtml(q.text.slice(0,50))}${q.text.length>50?"…":""}${q.images.length?`（${q.images.length} 张图）`:""}</span>
+    <button onclick="aiState.quote=null;aiRenderQuote()" title="移除">✕</button>`;
+}
+document.addEventListener("mouseup", (e)=>{
+  const float = document.getElementById("askFloat");
+  if(float.contains(e.target)) return;
+  setTimeout(()=>{
+    const sel = window.getSelection();
+    if(!sel || sel.isCollapsed){ float.style.display="none"; return; }
+    const text = sel.toString().trim();
+    const anchor = sel.anchorNode ? (sel.anchorNode.nodeType===3 ? sel.anchorNode.parentElement : sel.anchorNode) : null;
+    if(text.length<2 || !anchor || !anchor.closest(".q-card")){ float.style.display="none"; return; }
+    try{
+      const range = sel.getRangeAt(0);
+      const imgs = Array.from(range.cloneContents().querySelectorAll("img")).map(i=>i.src);
+      const rect = range.getBoundingClientRect();
+      float._sel = {text, images:imgs};
+      float.style.left = Math.max(8, Math.min(rect.left + rect.width/2 - 44, window.innerWidth-100)) + "px";
+      float.style.top = Math.max(60, rect.top - 40) + "px";
+      float.style.display = "block";
+    }catch(err){ float.style.display="none"; }
+  }, 10);
+});
+document.addEventListener("mousedown", (e)=>{
+  const float = document.getElementById("askFloat");
+  if(!float.contains(e.target)) float.style.display="none";
+});
+document.getElementById("askFloat").addEventListener("click", ()=>{
+  const float = document.getElementById("askFloat");
+  if(float._sel){
+    aiState.quote = float._sel;
+    aiRenderQuote();
+    if(!document.getElementById("aiPanel").classList.contains("open")) aiTogglePanel();
+    document.getElementById("aiInput").focus();
+  }
+  float.style.display = "none";
+  window.getSelection().removeAllRanges();
+});
+
+/* ── 上下文构建：当前题 + 题库检索 ── */
+function aiStripMd(s, imgs){
+  return String(s||"").replace(/!\[\]\(([^)\s]+)\)/g, (m,u)=>{ if(imgs) imgs.push(u); return "[图]"; });
+}
+function aiCurrentContext(){
+  const item = cur();
+  if(!item) return null;
+  const q = QUIZ_BANKS[item.bankIdx].questions[item.qIdx];
+  const bank = QUIZ_BANKS[item.bankIdx];
+  const imgs = [];
+  let t = `【当前题目】${bank.section} ${bank.name} 第${q.k.split("#")[1]}题（${TYPE_LABEL[q.t]}）\n题干：${aiStripMd(q.s, imgs)}`;
+  if(q.o) t += "\n选项：" + Object.entries(q.o).map(([k,v])=>`${k}. ${aiStripMd(v, imgs)}`).join("；");
+  t += "\n题库标注答案：" + (q.a==null ? "未知" : (Array.isArray(q.a) ? q.a.join("；") : q.a));
+  if(q.note) t += "\n题库备注：" + q.note;
+  return {text:t, images:imgs};
+}
+function aiRetrieve(query){
+  const q = String(query||"").toLowerCase();
+  if(q.length<2) return [];
+  const grams = new Set();
+  for(let i=0;i<q.length-1;i++){ const g=q.slice(i,i+2); if(!/\s/.test(g)) grams.add(g); }
+  const scored = [];
+  QUIZ_BANKS.forEach(b=>b.questions.forEach(qq=>{
+    const text = (qq.s+" "+Object.values(qq.o||{}).join(" ")+" "+(qq.note||"")).replace(/!\[\]\([^)]+\)/g," ").toLowerCase();
+    let s = 0;
+    grams.forEach(g=>{ if(text.includes(g)) s += 2; });
+    if(s>4) scored.push({s, b, q:qq});
+  }));
+  scored.sort((x,y)=>y.s-x.s);
+  return scored.slice(0,4);
+}
+
+const AI_SYSTEM = [
+  "你是《电工学》刷题网站内置的 AI 助教，服务对象是正在复习这门课的学生。",
+  "课程范围：正弦交流电路、三相电路、磁路与铁心线圈电路、三相异步电动机、工业企业供电与安全用电，以及三个配套实验。",
+  "回答规则：",
+  "1. 全程使用中文；先给结论，再讲原理，最后点出考点；照顾基础薄弱的学生，必要时举例。",
+  "2. 上下文里会提供「当前题目」「题库相关资料」，优先依据它们回答；引用题库时说明出处（章节题号）。",
+  "3. 公式用文字或简单符号书写（如 U=220V、I=U/|Z|、P=UIcosφ），不要用 LaTeX。",
+  "4. 学生划选了一段内容提问时，重点解释那段内容。",
+  "5. 涉及图片时若能看图则结合图片分析；看不到图片就明确说明，不要假装看到。",
+  "6. 不确定就明确说「不确定」，绝不编造；超出课程范围的问题简要回答并引导回课程。"
+].join("\n");
+
+/* ── 调用智谱 API（流式，视觉模型降级回退） ── */
+async function aiCallGLM(messages, images, key, onDelta, signal){
+  async function once(useVision){
+    const model = useVision ? AI_MODEL_VISION : AI_MODEL_TEXT;
+    const msgs = messages.slice();
+    if(useVision){
+      const last = msgs[msgs.length-1];
+      const content = [{type:"text", text:last.content}];
+      images.forEach(u=>content.push({type:"image_url", image_url:{url:u}}));
+      msgs[msgs.length-1] = {role:"user", content};
+    }
+    const resp = await fetch(AI_ENDPOINT, {
+      method:"POST",
+      headers:{"Authorization":"Bearer "+key, "Content-Type":"application/json"},
+      body: JSON.stringify({model, messages:msgs, stream:true, temperature:0.3}),
+      signal
+    });
+    if(!resp.ok){
+      const errText = await resp.text().catch(()=> "");
+      const err = new Error("HTTP "+resp.status+" "+errText.slice(0,200));
+      err.status = resp.status; err.visionTried = useVision;
+      throw err;
+    }
+    const reader = resp.body.getReader();
+    const dec = new TextDecoder();
+    let buf = "";
+    while(true){
+      const {done, value} = await reader.read();
+      if(done) break;
+      buf += dec.decode(value, {stream:true});
+      let idx;
+      while((idx = buf.indexOf("\n")) >= 0){
+        const line = buf.slice(0, idx).trim(); buf = buf.slice(idx+1);
+        if(!line.startsWith("data:")) continue;
+        const data = line.slice(5).trim();
+        if(data === "[DONE]") return;
+        try{
+          const j = JSON.parse(data);
+          const d = j.choices && j.choices[0] && j.choices[0].delta && j.choices[0].delta.content;
+          if(d) onDelta(d);
+        }catch(e){}
+      }
+    }
+  }
+  const useVision = images && images.length>0;
+  try{
+    await once(useVision);
+  }catch(e){
+    if(useVision && (e.status===400 || e.status===404)){
+      // 视觉模型不可用时降级为纯文本，并把图片地址告诉模型
+      messages[messages.length-1].content += "\n（本消息原含图片：" + images.join(" , ") + "，视觉模型暂不可用，请按文字信息回答，并说明看不到图片）";
+      await once(false);
+    }else{
+      throw e;
+    }
+  }
+}
+
+/* ── 发送 ── */
+async function aiSend(preset){
+  const input = document.getElementById("aiInput");
+  const sendBtn = document.getElementById("aiSend");
+  if(aiState.streaming){
+    if(aiState.abort) aiState.abort.abort();
+    return;
+  }
+  let text = (preset || input.value || "").trim();
+  const quote = aiState.quote;
+  if(!text && !quote){ showToast("先输入问题，或划选题干内容"); return; }
+  if(!text && quote) text = "请解释我划选的这段内容。";
+  const key = getAIKey();
+  if(!key){
+    if(!document.getElementById("aiPanel").classList.contains("open")) aiTogglePanel();
+    document.getElementById("aiSettings").style.display = "block";
+    aiAddMsg("ai", "还没有配置 API Key。去 bigmodel.cn 用手机号免费注册 → 控制台 → API Keys → 新建，把 Key 粘贴到上面的设置框里即可（Key 只存在你自己浏览器里）。");
+    return;
+  }
+  if(!aiRateOk()) return;
+
+  // 组上下文
+  const images = [];
+  const parts = [];
+  const ctx = aiCurrentContext();
+  if(ctx){ parts.push(ctx.text); ctx.images.forEach(u=>images.push(u)); }
+  if(quote){
+    parts.push("【我划选的内容】\n" + quote.text);
+    quote.images.forEach(u=>images.push(u));
+  }
+  const hits = aiRetrieve(text + " " + (quote?quote.text:""));
+  if(hits.length){
+    const lines = hits.map((h,i)=>{
+      const qi = h.q;
+      const stem = aiStripMd(qi.s, null).slice(0, 120);
+      const ans = qi.a==null ? "未知" : (Array.isArray(qi.a) ? qi.a.join("；") : qi.a);
+      return `${i+1}. 【${h.b.section} ${h.b.name}】${stem} … 答案：${ans}${qi.note?(" 备注："+qi.note):""}`;
+    });
+    parts.push("【题库相关资料】\n" + lines.join("\n"));
+  }
+  parts.push("【我的问题】\n" + text);
+
+  aiAddMsg("user", text, quote);
+  input.value = ""; aiState.quote = null; aiRenderQuote();
+
+  const bubbleDiv = aiAddMsg("ai", "…");
+  const bubble = bubbleDiv.querySelector(".ai-bubble");
+  aiState.streaming = true; aiState.abort = new AbortController();
+  sendBtn.textContent = "停止";
+
+  const messages = [{role:"system", content:AI_SYSTEM}]
+    .concat(aiState.history.slice(-8))
+    .concat([{role:"user", content:parts.join("\n\n")}]);
+
+  let acc = "";
+  try{
+    await aiCallGLM(messages, images, key, (d)=>{
+      acc += d;
+      bubble.innerHTML = mdLite(acc);
+      const box = document.getElementById("aiMsgs");
+      box.scrollTop = box.scrollHeight;
+    }, aiState.abort.signal);
+    if(!acc) acc = "（模型没有返回内容，请重试）";
+  }catch(e){
+    if(e && e.name === "AbortError"){
+      acc = acc || "（已停止）";
+    }else{
+      let msg = "调用失败：" + (e && e.message ? e.message : e);
+      if(e && e.status===401) msg += "\n💡 Key 无效，请检查 ⚙ 设置里的 Key 是否粘贴完整。";
+      else if(e && e.status===429) msg += "\n💡 模型限流了（免费档有频率限制），过 1 分钟再试。";
+      else if(e && /Failed to fetch|NetworkError/i.test(String(e && e.message))) msg += "\n💡 网络不通：如果开着代理请先关掉，智谱 API 国内直连。";
+      acc = msg;
+    }
+  }
+  bubble.innerHTML = mdLite(acc);
+  aiState.history.push({role:"user", content:text});
+  aiState.history.push({role:"assistant", content:acc});
+  if(aiState.history.length>20) aiState.history = aiState.history.slice(-20);
+  aiState.streaming = false; aiState.abort = null;
+  sendBtn.textContent = "发送";
+}
+
+// 输入框：Enter 发送，Shift+Enter 换行
+document.getElementById("aiInput").addEventListener("keydown", (e)=>{
+  if(e.key==="Enter" && !e.shiftKey){ e.preventDefault(); aiSend(); }
+});
+
 /* ═══════════════ 渲染入口 ═══════════════ */
 function renderAll(){
   renderChapterFilter();
@@ -594,5 +932,6 @@ function init(){
     document.getElementById(id).className = (m===state.mode)?"active":"";
   });
   renderAll();
+  aiRenderWelcome();
 }
 init();

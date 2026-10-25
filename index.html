@@ -81,6 +81,37 @@
   </div>
 </main>
 
+<!-- 划词提问浮动按钮 -->
+<button id="askFloat" class="ask-float" style="display:none">✨ 问 AI</button>
+
+<!-- AI 助教面板 -->
+<button id="aiFab" class="ai-fab" onclick="aiTogglePanel()">✨ AI 助教</button>
+<aside id="aiPanel" class="ai-panel">
+  <div class="ai-head">
+    <span class="ai-title">✨ AI 助教</span>
+    <button class="ai-icon-btn" onclick="aiToggleSettings()" title="设置">⚙</button>
+    <button class="ai-icon-btn" onclick="aiClear()" title="清空对话">🗑</button>
+    <button class="ai-icon-btn" onclick="aiTogglePanel()" title="收起">✕</button>
+  </div>
+  <div id="aiSettings" class="ai-settings" style="display:none">
+    <div class="ai-set-row"><span>模型</span><b>GLM-4.5-Flash（免费）</b></div>
+    <div class="ai-set-row"><span>识图</span><b>自动切换 GLM-4V-Flash</b></div>
+    <div class="ai-set-row"><span>API Key（粘贴你自己的，存在本浏览器）</span></div>
+    <input id="aiKeyInput" type="password" placeholder="bigmodel.cn → 控制台 → API Keys">
+    <div class="ai-set-btns">
+      <button class="btn-outline" onclick="aiSaveKey()">保存</button>
+      <button class="btn-outline" onclick="aiClearKey()">清除</button>
+    </div>
+    <div class="ai-set-tip" id="aiUsageTip"></div>
+  </div>
+  <div id="aiMsgs" class="ai-msgs"></div>
+  <div id="aiQuote" class="ai-quote"></div>
+  <div class="ai-input-row">
+    <textarea id="aiInput" rows="1" placeholder="提问，或在题目里划词后点「✨ 问 AI」"></textarea>
+    <button id="aiSend" onclick="aiSend()">发送</button>
+  </div>
+</aside>
+
 <div class="toast" id="toast"></div>
 
 <div class="modal-overlay" id="modalOverlay">
