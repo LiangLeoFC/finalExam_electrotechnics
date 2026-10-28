@@ -193,16 +193,27 @@ function renderQuestion(){
     if(q.t==="single") gradeSingle(q, saved, true);
     else if(q.t==="judge") renderJudgeFeedback(q, saved, true);
     else if(q.t==="multiple" && Array.isArray(saved)) renderMultiFeedback(q, saved, true);
-    else if(q.t==="fill" && saved==="__revealed__") revealFill(q, true);
+    else if(q.t==="fill"){
+      if(Array.isArray(saved)){
+        gradeFill(q, saved, true);   // 回显：填过的答案 + 对错
+      }else if(saved==="__revealed__"){
+        revealFill(q, true);         // 旧数据兼容（无答案题的参考信息）
+      }
+    }
   }
 
-  // 整组判分模式：回显已选
+  // 整组判分模式：回显已选/已填
   if(state.scoring==="batch" && state.answers[q.k]!=null){
     const sel = state.answers[q.k];
-    document.querySelectorAll(".opt").forEach(el=>{
-      const v = el.getAttribute("data-v");
-      if(Array.isArray(sel) ? sel.includes(v) : sel===v) el.classList.add("selected");
-    });
+    if(q.t==="fill" && Array.isArray(sel)){
+      document.querySelectorAll(".fill-input").forEach((el,i)=>{ el.value = sel[i] || ""; });
+      if(state.batchSubmitted) gradeFill(q, sel, true);
+    }else{
+      document.querySelectorAll(".opt").forEach(el=>{
+        const v = el.getAttribute("data-v");
+        if(Array.isArray(sel) ? sel.includes(v) : sel===v) el.classList.add("selected");
+      });
+    }
   }
 
   // 导航状态
@@ -237,7 +248,38 @@ function renderMultiple(q){
   return optsHtml(q, true) + btn;
 }
 function renderFill(q){
-  return `<div class="fill-reveal"><button class="btn-outline" onclick="revealFill(null,false)">显示答案</button></div>`;
+  const n = Array.isArray(q.a) ? q.a.length : 1;
+  const batch = state.scoring === "batch";
+  let html = `<div class="fill-inputs">`;
+  for(let i=0;i<n;i++){
+    const label = n>1 ? `第${"一二三四五六七八九"[i]||i+1}空` : "答案";
+    html += `<div class="fill-row"><span class="fill-label">${label}</span>
+      <input class="fill-input" data-i="${i}" placeholder="输入你的答案${batch?"":"，回车提交"}" autocomplete="off"
+        oninput="fillInputChanged('${q.k}', this)"></div>`;
+  }
+  html += `</div>`;
+  if(batch){
+    html += `<div class="fill-actions" style="color:var(--text-muted);font-size:12.5px">整组判分模式下，填好后点上方「提交整组判分」统一对比</div>`;
+  }else{
+    html += `<div class="fill-actions"><button class="btn-primary" onclick="submitFill()">提交答案对比</button></div>`;
+  }
+  return html;
+}
+function fillInputChanged(qkey, el){
+  const arr = Array.isArray(state.answers[qkey]) ? state.answers[qkey] : [];
+  arr[parseInt(el.getAttribute("data-i"))] = el.value;
+  state.answers[qkey] = arr;
+  if(state.scoring==="batch") updateSubmitBtn();
+}
+function submitFill(){
+  const item = cur(); if(!item) return;
+  const q = item.q;
+  if(q.a==null) return;
+  if(state.positions["_ans_"+q.k]!=null) return;
+  const user = [...document.querySelectorAll(".fill-input")].map(el=>el.value.trim());
+  if(user.every(v=>!v)){ showToast("先填写答案再提交"); return; }
+  if(state.scoring==="batch"){ showToast("整组判分模式下统一提交"); return; }
+  gradeFill(q, user, false);
 }
 
 /* ═══════════════ 作答与判分 ═══════════════ */
@@ -353,6 +395,78 @@ function renderMultiFeedback(q, selArr, silent){
   showFeedback(q, correct);
 }
 
+/* ── 填空答案对比（宽松匹配：全半角/空格/标点/数值/括号别名/包含关系） ── */
+function normalizeAnswer(s){
+  return String(s||"").toLowerCase()
+    .replace(/[\s\u3000]/g,"")
+    .replace(/[（(]/g,"(").replace(/[）)]/g,")")
+    .replace(/[，,。.、；;：:？?！!"'“”‘’·]/g,"")
+    .replace(/[—–]/g,"-");
+}
+function answerVariants(a){
+  const raw = String(a||"");
+  const list = [raw];
+  const m = raw.match(/^(.*?)[（(]([^）)]*)[）)]\s*$/);
+  if(m){ list.push(m[1], m[2]); }
+  raw.split(/[或\/]/).forEach(x=>{ const s=x.trim(); if(s && s.length>1) list.push(s); });
+  return [...new Set(list.map(normalizeAnswer).filter(Boolean))];
+}
+function judgeBlank(user, correct){
+  const u = normalizeAnswer(user);
+  if(!u) return false;
+  const vs = answerVariants(correct);
+  if(vs.includes(u)) return true;
+  // 数值对比：380 / 380V / 380.0
+  const un = u.match(/-?\d+(?:\.\d+)?/), cn = String(correct).match(/-?\d+(?:\.\d+)?/);
+  if(un && cn && parseFloat(un[0]) === parseFloat(cn[0])) return true;
+  // 包含关系（双方都足够长才判）
+  if(vs.some(v => v.length>=2 && u.length>=2 && (u.includes(v) || v.includes(u)))) return true;
+  return false;
+}
+function gradeFill(q, userArr, silent){
+  const correctArr = Array.isArray(q.a) ? q.a : [q.a];
+  const marks = correctArr.map((c,i)=>judgeBlank(userArr[i]||"", c));
+  const allRight = marks.every(Boolean);
+  [...document.querySelectorAll(".fill-input")].forEach((el,i)=>{
+    el.value = userArr[i] || el.value || "";
+    el.disabled = true;
+    el.classList.add(marks[i] ? "ok" : "bad");
+  });
+  const fb = document.getElementById("feedback");
+  const [srcLabel, srcCls] = SRC_LABEL[q.src] || SRC_LABEL.unknown;
+  fb.className = "feedback show " + (allRight ? "ok" : "no");
+  let h = `<div class="fb-line1">${allRight ? "✅ 全部答对" : "❌ 有错误"} <span class="fb-src ${srcCls}">${srcLabel}</span></div>`;
+  correctArr.forEach((c,i)=>{
+    const ok = marks[i];
+    const u = String(userArr[i]||"").trim();
+    h += `<div class="fb-blank ${ok?"ok":"bad"}"><span class="fb-mark">${ok?"✓":"✗"}</span> 第${"一二三四五六七八九"[i]||i+1}空：你写「${escapeHtml(u||"（空）")}」`;
+    h += ok ? "，正确" : `，标准答案是「${escapeHtml(c)}」`;
+    h += `</div>`;
+  });
+  if(q.my && q.wrong){
+    const myText = Array.isArray(q.my) ? q.my.join("；") : q.my;
+    h += `<div class="fb-my">你在学习通的答案：${escapeHtml(myText)}（被判错）</div>`;
+  }
+  if(q.note) h += `<div class="fb-note">💡 ${escapeHtml(q.note)}</div>`;
+  if(!allRight) h += `<div class="fb-override"><button class="btn-outline" onclick="overrideFill()" style="border-color:var(--correct);color:var(--correct)">我的答案也对（手动改判为对）</button></div>`;
+  fb.innerHTML = h;
+  if(!silent) markAnswered(q, allRight, userArr);
+}
+function overrideFill(){
+  const item = cur(); if(!item) return;
+  const q = item.q;
+  const r = state.records[q.k];
+  if(r && r.c < r.t) r.c = r.t;
+  delete state.wrongBook[q.k];
+  saveState(); renderStats(); renderWrongList();
+  const fb = document.getElementById("feedback");
+  fb.className = "feedback show ok";
+  const line = fb.querySelector(".fb-line1");
+  if(line) line.innerHTML = `✅ 已手动改判为正确 <span class="fb-src fb-src-verified">答案已验证</span>`;
+  const btn = fb.querySelector(".fb-override"); if(btn) btn.remove();
+  showToast("已记为答对");
+}
+
 function revealFill(q, silent){
   const item = cur(); if(!item && !q) return;
   q = q || item.q;
@@ -387,11 +501,11 @@ function updateSubmitBtn(){
   if(state.scoring!=="batch" || !state.list.length){ btn.style.display="none"; return; }
   btn.style.display = "";
   const answered = Object.keys(state.answers).filter(k=>{
-    const a=state.answers[k]; return Array.isArray(a)? a.length>0 : a!=null;
+    const a=state.answers[k]; return Array.isArray(a)? a.some(x=>x && String(x).trim()) : a!=null;
   }).length;
   const total = state.list.filter(it=>{
     const q=QUIZ_BANKS[it.bankIdx].questions[it.qIdx];
-    return (q.t==="single"||q.t==="multiple"||q.t==="judge") && q.a!=null;
+    return (q.t==="single"||q.t==="multiple"||q.t==="judge"||q.t==="fill") && q.a!=null;
   }).length;
   btn.textContent = state.batchSubmitted ? "已提交" : `提交整组判分（已答 ${answered} 题）`;
   btn.disabled = state.batchSubmitted;
@@ -401,12 +515,20 @@ function submitAll(){
   let right=0, total=0, skipped=0;
   state.list.forEach(it=>{
     const q = QUIZ_BANKS[it.bankIdx].questions[it.qIdx];
-    if(!(q.t==="single"||q.t==="multiple"||q.t==="judge") || q.a==null){ skipped++; return; }
+    const isFill = q.t==="fill";
+    if(!(isFill||q.t==="single"||q.t==="multiple"||q.t==="judge") || q.a==null){ skipped++; return; }
     total++;
     const ans = state.answers[q.k];
-    const userPicked = Array.isArray(ans)? ans.slice().sort().join("") : ans;
-    const rightAns = q.t==="multiple"? String(q.a).split("").sort().join("") : q.a;
-    const correct = userPicked!=null && userPicked===rightAns;
+    let correct = false;
+    if(isFill){
+      const user = Array.isArray(ans) ? ans : [];
+      const correctArr = Array.isArray(q.a) ? q.a : [q.a];
+      correct = correctArr.every((c,i)=>judgeBlank(user[i]||"", c));
+    }else{
+      const userPicked = Array.isArray(ans)? ans.slice().sort().join("") : ans;
+      const rightAns = q.t==="multiple"? String(q.a).split("").sort().join("") : q.a;
+      correct = userPicked!=null && userPicked===rightAns;
+    }
     if(correct) right++;
     markAnsweredSilent(q, correct);
   });
@@ -417,7 +539,7 @@ function submitAll(){
   const pct = total? Math.round(right/total*100) : 0;
   document.getElementById("batchScore").textContent = total? `${right} / ${total}` : "-";
   document.getElementById("batchDetail").textContent =
-    total? `正确率 ${pct}%${skipped?`，另有 ${skipped} 道填空/无答案题未参与判分，可逐题查看答案自评`:""}`
+    total? `正确率 ${pct}%${skipped?`，另有 ${skipped} 道无答案题未参与判分`:""}`
          : "本组没有可自动判分的题目";
   res.scrollIntoView({behavior:"smooth"});
 }
@@ -563,7 +685,7 @@ document.addEventListener("keydown", (e)=>{
   const q = item.q;
   if(e.key==="ArrowLeft"){ goPrev(); e.preventDefault(); }
   else if(e.key==="ArrowRight"){ goNext(); e.preventDefault(); }
-  else if(e.key===" " && (q.t==="fill"||q.a==null)){ revealFill(null,false); e.preventDefault(); }
+  else if(e.key===" " && q.a==null){ revealFill(null,false); e.preventDefault(); }
   else if(e.key==="Enter" && q.t==="multiple"){ confirmMulti(q.k); e.preventDefault(); }
   else if(/^[1-9a-eA-E]$/.test(e.key)){
     let v = null;
@@ -574,6 +696,14 @@ document.addEventListener("keydown", (e)=>{
       v = letters[idx]||null;
     }
     if(v){ onOptClick(q.k, v); e.preventDefault(); }
+  }
+});
+
+/* 填空输入框：回车提交对比 */
+document.addEventListener("keydown", (e)=>{
+  if(e.key==="Enter" && e.target && e.target.classList && e.target.classList.contains("fill-input")){
+    e.preventDefault();
+    if(state.scoring==="instant") submitFill();
   }
 });
 

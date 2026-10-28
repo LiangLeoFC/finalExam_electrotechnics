@@ -89,6 +89,23 @@ img.qimg{max-width:100%;vertical-align:middle;border-radius:4px}
 
 /* 填空/主观 */
 .fill-reveal{margin:4px 0 10px}
+
+/* ── 填空作答 ── */
+.fill-inputs{display:flex;flex-direction:column;gap:10px;margin:4px 0 10px}
+.fill-row{display:flex;align-items:center;gap:10px}
+.fill-label{flex-shrink:0;width:52px;font-size:13px;color:var(--text-sub);text-align:right}
+.fill-input{flex:1;padding:10px 14px;border:1.5px solid var(--border);border-radius:var(--radius-sm);
+  font-size:15px;font-family:var(--font-sans);transition:all .15s;background:var(--surface)}
+.fill-input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-bg)}
+.fill-input.ok{border-color:var(--correct);background:var(--correct-bg)}
+.fill-input.bad{border-color:var(--wrong);background:var(--wrong-bg)}
+.fill-input:disabled{color:var(--text)}
+.fill-actions{margin-top:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.fb-blank{font-size:14px;margin-top:6px;line-height:1.7}
+.fb-blank .fb-mark{font-weight:700}
+.fb-blank.ok .fb-mark{color:var(--correct)}
+.fb-blank.bad .fb-mark{color:var(--wrong)}
+.fb-override{margin-top:10px}
 .selfmark{display:flex;gap:10px;margin-top:12px}
 
 /* 答案反馈区 */
