@@ -62,10 +62,10 @@ function escapeHtml(s){
   return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
     .replace(/"/g,"&quot;").replace(/'/g,"&#39;");
 }
-// markdown 图片 ![](url) → <img>，其余转义
+// markdown 图片 ![](url) → <img>，其余转义（同时支持远程 URL 和站内相对路径）
 function renderText(t){
   let h = escapeHtml(t||"");
-  h = h.replace(/!\[\]\((https?:\/\/[^)\s]+)\)/g, '<img class="qimg" loading="lazy" src="$1">');
+  h = h.replace(/!\[\]\(([^)\s]+)\)/g, '<img class="qimg" loading="lazy" src="$1">');
   return h;
 }
 function answerToText(q){
