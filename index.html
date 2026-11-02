@@ -94,12 +94,15 @@
     <button class="ai-icon-btn" onclick="aiTogglePanel()" title="收起">✕</button>
   </div>
   <div id="aiSettings" class="ai-settings" style="display:none">
-    <div class="ai-set-row"><span>模型</span><b>GLM-4.5-Flash（免费）</b></div>
-    <div class="ai-set-row"><span>识图</span><b>自动切换 GLM-4V-Flash</b></div>
+    <div class="ai-set-row"><span>模型</span><b id="aiModelLabel">doubao-seed-1-6-flash（默认）</b></div>
+    <div class="ai-set-row"><span>识图</span><b>自动切换 doubao-seed-1-6-vision</b></div>
     <div class="ai-set-row"><span>API Key（粘贴你自己的，存在本浏览器）</span></div>
-    <input id="aiKeyInput" type="password" placeholder="bigmodel.cn → 控制台 → API Keys">
+    <input id="aiKeyInput" type="password" placeholder="火山方舟 console.volcengine.com/ark → API Key 管理">
+    <div class="ai-set-row"><span>模型/接入点（可留空用默认）</span></div>
+    <input id="aiModelInput" type="text" placeholder="留空用默认；或粘贴 ep- 开头的接入点 ID">
     <div class="ai-set-btns">
-      <button class="btn-outline" onclick="aiSaveKey()">保存</button>
+      <button class="btn-outline" onclick="aiSaveKey()">保存 Key</button>
+      <button class="btn-outline" onclick="aiSaveModel()">保存模型</button>
       <button class="btn-outline" onclick="aiClearKey()">清除</button>
     </div>
     <div class="ai-set-tip" id="aiUsageTip"></div>

@@ -707,10 +707,10 @@ document.addEventListener("keydown", (e)=>{
   }
 });
 
-/* ═══════════════ AI 助教（智谱 GLM 免费模型） ═══════════════ */
-const AI_ENDPOINT = "https://open.bigmodel.cn/api/paas/v4/chat/completions";
-const AI_MODEL_TEXT = "glm-4.5-flash";    // 免费文本模型
-const AI_MODEL_VISION = "glm-4v-flash";   // 免费视觉模型（识图）
+/* ═══════════════ AI 助教（豆包 · 火山方舟，免费额度） ═══════════════ */
+const AI_ENDPOINT = "https://ark.cn-beijing.volces.com/api/v3/chat/completions";
+const AI_MODEL_TEXT = "doubao-seed-1-6-flash-250828";    // 免费额度 50 万 token/天
+const AI_MODEL_VISION = "doubao-seed-1-6-vision-250815"; // 识图模型（有图时自动切换）
 const AI_DEFAULT_KEY = "";                // 部署时可内置混淆后的 Key（可选）
 const AI_RATE = {perMin: 5, perDay: 100}; // 浏览器端限流（防滥用辅助层）
 const aiState = {quote:null, history:[], streaming:false, abort:null};
@@ -729,6 +729,22 @@ function aiClearKey(){
   showToast(AI_DEFAULT_KEY ? "已清除自定义 Key，使用内置 Key" : "已清除 Key");
   aiRenderWelcome();
 }
+function getAIModel(){ return localStorage.getItem("dgx_ai_model") || AI_MODEL_TEXT; }
+function getAIVisionModel(){ return localStorage.getItem("dgx_ai_model") || AI_MODEL_VISION; }
+function aiSaveModel(){
+  const v = document.getElementById("aiModelInput").value.trim();
+  if(v) localStorage.setItem("dgx_ai_model", v);
+  else localStorage.removeItem("dgx_ai_model");
+  document.getElementById("aiModelInput").value = "";
+  aiRefreshModelLabel();
+  showToast(v ? ("模型已设置为 " + v) : "已恢复默认模型");
+}
+function aiRefreshModelLabel(){
+  const lbl = document.getElementById("aiModelLabel");
+  if(!lbl) return;
+  const custom = localStorage.getItem("dgx_ai_model");
+  lbl.textContent = custom ? custom : "doubao-seed-1-6-flash（默认·免费额度）";
+}
 function aiTogglePanel(open){
   const panel = document.getElementById("aiPanel");
   const willOpen = (typeof open === "boolean") ? open : !panel.classList.contains("open");
@@ -740,7 +756,7 @@ function aiTogglePanel(open){
 function aiToggleSettings(){
   const el = document.getElementById("aiSettings");
   el.style.display = el.style.display==="none" ? "block" : "none";
-  if(el.style.display==="block") aiUsageTip();
+  if(el.style.display==="block"){ aiUsageTip(); aiRefreshModelLabel(); }
 }
 function aiUsageTip(){
   const el = document.getElementById("aiUsageTip");
@@ -780,7 +796,7 @@ function aiRenderWelcome(){
   const box = document.getElementById("aiMsgs");
   if(aiState.history.length) return;
   const keyTip = getAIKey() ? "" :
-    `<div class="ai-chip" onclick="aiToggleSettings()">👉 先去 ⚙ 设置里粘贴免费 Key（bigmodel.cn 注册即得）</div>`;
+    `<div class="ai-chip" onclick="aiToggleSettings()">👉 先去 ⚙ 设置里粘贴 Key（火山方舟免费额度）</div>`;
   box.innerHTML = `<div class="ai-welcome">
     我读过全部 165 道题库，可以讲题、出类似题、总结考点。<br>
     💡 小技巧：在题目里<b>用鼠标划选</b>内容（公式图片也行），点「✨ 问 AI」即可针对选中部分提问。<br>
@@ -904,10 +920,10 @@ const AI_SYSTEM = [
   "6. 不确定就明确说「不确定」，绝不编造；超出课程范围的问题简要回答并引导回课程。"
 ].join("\n");
 
-/* ── 调用智谱 API（流式，视觉模型降级回退） ── */
-async function aiCallGLM(messages, images, key, onDelta, signal){
+/* ── 调用豆包 API（流式，视觉模型降级回退） ── */
+async function aiCallAI(messages, images, key, onDelta, signal){
   async function once(useVision){
-    const model = useVision ? AI_MODEL_VISION : AI_MODEL_TEXT;
+    const model = useVision ? getAIVisionModel() : getAIModel();
     const msgs = messages.slice();
     if(useVision){
       const last = msgs[msgs.length-1];
@@ -978,7 +994,7 @@ async function aiSend(preset){
   if(!key){
     if(!document.getElementById("aiPanel").classList.contains("open")) aiTogglePanel();
     document.getElementById("aiSettings").style.display = "block";
-    aiAddMsg("ai", "还没有配置 API Key。去 bigmodel.cn 用手机号免费注册 → 控制台 → API Keys → 新建，把 Key 粘贴到上面的设置框里即可（Key 只存在你自己浏览器里）。");
+    aiAddMsg("ai", "还没有配置 API Key。去 console.volcengine.com/ark（火山方舟）注册 →「API Key 管理」→ 创建 Key，粘贴到上面的设置框里即可（Key 只存在你自己浏览器里）。默认模型 doubao-seed-1-6-flash 每天有 50 万 token 免费额度，个人刷题足够用。");
     return;
   }
   if(!aiRateOk()) return;
@@ -1018,7 +1034,7 @@ async function aiSend(preset){
 
   let acc = "";
   try{
-    await aiCallGLM(messages, images, key, (d)=>{
+    await aiCallAI(messages, images, key, (d)=>{
       acc += d;
       bubble.innerHTML = mdLite(acc);
       const box = document.getElementById("aiMsgs");
@@ -1032,7 +1048,7 @@ async function aiSend(preset){
       let msg = "调用失败：" + (e && e.message ? e.message : e);
       if(e && e.status===401) msg += "\n💡 Key 无效，请检查 ⚙ 设置里的 Key 是否粘贴完整。";
       else if(e && e.status===429) msg += "\n💡 模型限流了（免费档有频率限制），过 1 分钟再试。";
-      else if(e && /Failed to fetch|NetworkError/i.test(String(e && e.message))) msg += "\n💡 网络不通：如果开着代理请先关掉，智谱 API 国内直连。";
+      else if(e && /Failed to fetch|NetworkError/i.test(String(e && e.message))) msg += "\n💡 网络不通：豆包 API 国内直连，如果开着代理请先关掉试试。";
       acc = msg;
     }
   }
