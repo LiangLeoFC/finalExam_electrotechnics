@@ -707,10 +707,10 @@ document.addEventListener("keydown", (e)=>{
   }
 });
 
-/* ═══════════════ AI 助教（豆包 · 火山方舟，免费额度） ═══════════════ */
+/* ═══════════════ AI 助教（豆包 · 火山方舟） ═══════════════ */
 const AI_ENDPOINT = "https://ark.cn-beijing.volces.com/api/v3/chat/completions";
-const AI_MODEL_TEXT = "doubao-seed-1-6-flash-250828";    // 免费额度 50 万 token/天
-const AI_MODEL_VISION = "doubao-seed-1-6-vision-250815"; // 识图模型（有图时自动切换）
+const AI_MODEL_TEXT = "doubao-seed-2-0-mini-260428";    // 默认模型（账号已开通，支持识图）
+const AI_MODEL_VISION = "doubao-seed-2-0-mini-260428";  // 识图模型（有图时自动切换）
 const AI_DEFAULT_KEY = "";                // 部署时可内置混淆后的 Key（可选）
 const AI_RATE = {perMin: 5, perDay: 100}; // 浏览器端限流（防滥用辅助层）
 const aiState = {quote:null, history:[], streaming:false, abort:null};
@@ -743,7 +743,7 @@ function aiRefreshModelLabel(){
   const lbl = document.getElementById("aiModelLabel");
   if(!lbl) return;
   const custom = localStorage.getItem("dgx_ai_model");
-  lbl.textContent = custom ? custom : "doubao-seed-1-6-flash（默认·免费额度）";
+  lbl.textContent = custom ? custom : "doubao-seed-2-0-mini（默认·支持识图）";
 }
 function aiTogglePanel(open){
   const panel = document.getElementById("aiPanel");
@@ -934,7 +934,13 @@ async function aiCallAI(messages, images, key, onDelta, signal){
     const resp = await fetch(AI_ENDPOINT, {
       method:"POST",
       headers:{"Authorization":"Bearer "+key, "Content-Type":"application/json"},
-      body: JSON.stringify({model, messages:msgs, stream:true, temperature:0.3}),
+      body: JSON.stringify(
+        (() => {
+          const body = {model, messages:msgs, stream:true, temperature:0.3};
+          if(/^doubao-seed-(1-6|2)/.test(model)) body.thinking = {type:"disabled"}; // 关闭思考，响应更快
+          return body;
+        })()
+      ),
       signal
     });
     if(!resp.ok){
@@ -994,7 +1000,7 @@ async function aiSend(preset){
   if(!key){
     if(!document.getElementById("aiPanel").classList.contains("open")) aiTogglePanel();
     document.getElementById("aiSettings").style.display = "block";
-    aiAddMsg("ai", "还没有配置 API Key。去 console.volcengine.com/ark（火山方舟）注册 →「API Key 管理」→ 创建 Key，粘贴到上面的设置框里即可（Key 只存在你自己浏览器里）。默认模型 doubao-seed-1-6-flash 每天有 50 万 token 免费额度，个人刷题足够用。");
+    aiAddMsg("ai", "还没有配置 API Key。去 console.volcengine.com/ark（火山方舟）注册 →「API Key 管理」→ 创建 Key，粘贴到上面的设置框里即可（Key 只存在你自己浏览器里）。默认模型 doubao-seed-2-0-mini 支持文字和公式识图，刷题够用。");
     return;
   }
   if(!aiRateOk()) return;
